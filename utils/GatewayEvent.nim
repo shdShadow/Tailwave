@@ -3,6 +3,7 @@ type GatewayData* = ref object
     heartbeat_interval* : int
 type GatewayEvent* = ref object
     op*: int
+    # TODO: GatewayData is too generic. It will never just be the heartbeat interval
     d*: GatewayData
     s*: int
     t*: string
@@ -14,12 +15,14 @@ proc convertJson*(json: string): GatewayEvent =
 proc forgeJsonString*(event: GatewayEvent): string = 
     var sequence = ""
     if event.s == 0:
-        sequence = "null"
+        let json_string = %*
+            {"op":1, "d": nil}
+        return json_string.pretty(0)
     else: 
-        sequence = $event.s
-    let json_string = %*
-        {"op": 1, "s": sequence}
-    return json_string.pretty(0)
+        let json_string = %*
+            {"op":1, "d": $event.s}
+        #sequence = $event.s
+        return json_string.pretty(0)
 
 
 
