@@ -1,4 +1,5 @@
 import std/json
+import ../payloads/Hello
 type GatewayData* = ref object 
     heartbeat_interval* : int
 type GatewayEvent* = ref object

@@ -1,10 +1,12 @@
 import ws, std/async, json, std/asyncdispatch
-import GatewayEvent
-import os
+import std/options
+import ../GatewayClient
 import std/terminal
 import log
+import ../payloads/Hello
+import ../payloads/Heartbeat
 # GLOBALS
-var first_event: GatewayEvent = nil
+var client = newGatewayClient()
 var discord_websocket: WebSocket
 # PROTOTYPES
 proc ReceiveMessage(): Future[void] {.async.}
@@ -15,6 +17,7 @@ proc RunConnection*(): Future[void] {.async.}
 proc RunConnection*(): Future[void] {.async.} =
     # Creates a new websocket
     discord_websocket = await newWebSocket("wss://gateway.discord.gg/?v=10&encoding=json")
+    client.ws = discord_websocket
     # Execute and await every asynchronous procedure
     await all(ReceiveMessage(), MaintainHeartbeat())
 
@@ -33,33 +36,48 @@ proc HandleMessage(message: string): Future[void] {.async.} =
     let payload = parseJson(message)
     printLogPayload(payload) # Temporary logic.
     # For debug reasons only, it checks if the current parsed json has opcode = 11 (Heartbeat ACK)
+    # Parse payload into the correct class
+    # 10 => Hello. Contains the heartbeat interval
+    # 11 => Heartbeat ACK
     if "op" in payload:
         let opCode = payload["op"].getInt()
-        if opCode == 11:
-            echo "Received Heartbeat ACK!"
+        case opCode:
+            of 10:
+                # Serialize this into an object: HelloPayload
+                # This switch branch is executed only once (hopefully). Discord's api should never send to us two Hello payloads. The check is made just in case something goes wrong
+                client.first_event = some(deserializeJsonHello(payload))
+                client.sequence_number = client.first_event.get().s
+                printLogInfoHeader()
+                echo "The heartbeat interval is: ", client.first_event.get().heartbeat_interval
+            of 11:
+                #TODO serialization
+                printLogInfoHeader()
+                echo "Received HeartbeatACK"
+            else:
+                # TODO: Error because of unrecognized payload
+                printErrorHeader()
+                echo "Unrecognized payload. Shutting down"
+                system.quit()
+    else:
+        #TODO: Print an error. If a payload does not have an opcode, it means that either discord has changed their package formation or something is currently wrong with their api
+        printErrorHeader()
+        echo "Unrecognized payload structure. Shutting down"
+        system.quit()
     # first_event is used to get the heartbeat interval. It's the first message that the discord websocket ever sends to us
-    if first_event == nil :
-        # Returns a GetawayEvent, which is just an object containing the various data of the payload
-        let hello = convertJson(message)
-        first_event = hello
-        printLogInfoHeader()
-        echo "The heartbeat interval is: ", first_event.d.heartbeat_interval
-    else :
-        echo "We didnt parse because we didn't know how to do it"
 
 # Procedure used to maintain the discord websocket open
 proc MaintainHeartbeat(): Future[void] {.async.} =
     while true:
-        if first_event != nil:
+        if client.first_event.isSome():
             # Creates a json string which rapresent an Heartbeat payload
-            # TODO: change this to ForgeHeartbeat
-            echo first_event.forgeJsonString()
-            discard discord_websocket.send(first_event.forgeJsonString())
+            let heartbeat = HeartbeatPayload(op:1, d: client.sequence_number)
+            discard discord_websocket.send(heartbeat.serializeJsonHeartbeat())
             printLogInfoHeader()
             echo "Sent Heartbeat!"
+            echo heartbeat.serializeJsonHeartbeat()
             # Sleep for the amount of time specified by the Heartbea Interval saved in the first_vent, expressed in milliseconds
-            await sleepAsync(first_event.d.heartbeat_interval)
-        else:
+            await sleepAsync(client.first_event.get().heartbeat_interval)
+        #else:
             # It should never event this branch (hopefully)
             echo "I couldn't the event is null"
 
